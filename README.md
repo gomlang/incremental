@@ -140,7 +140,7 @@ smoke case, and runs both interoperability and Go race-detector checks.
 
 Native consumer tests check all 324 histories against retained results from an
 independent evaluator that recomputed every request from scratch, without sharing
-the implementation's cache or revision algorithm. [Fixture provenance](../consumers/incremental/tests/data/README.md) records the model and seed. Histories cover random DAGs,
+the implementation's cache or revision algorithm. [Fixture provenance](../../goml-dev/ecosystem/consumers/incremental/tests/data/README.md) records the model and seed. Histories cover random DAGs,
 dynamic branches, equality cutoff, failing child queries, caught errors, cache
 eviction, clearing, and cycles that appear and disappear after edits. Focused
 GoML tests cover heterogeneous composition, diamond reuse, dependency replacement,
