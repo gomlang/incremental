@@ -134,15 +134,27 @@ From the repository root:
 (cd ../verification && just ecosystem-test incremental)
 ```
 
-This formats/checks the independent modules, runs library and consumer tests,
-builds the versioned consumer twice to verify cache stability, executes its
+This formats/checks the library and example, runs their tests and independent
+downstream verification, builds the example twice to verify cache stability, executes its
 smoke case, and runs both interoperability and Go race-detector checks.
 
-Native consumer tests check all 324 histories against retained results from an
+Native example tests check all 324 histories against retained results from an
 independent evaluator that recomputed every request from scratch, without sharing
-the implementation's cache or revision algorithm. [Fixture provenance](consumer/tests/data/README.md) records the model and seed. Histories cover random DAGs,
+the implementation's cache or revision algorithm. [Fixture provenance](examples/basic/tests/data/README.md) records the model and seed. Histories cover random DAGs,
 dynamic branches, equality cutoff, failing child queries, caught errors, cache
 eviction, clearing, and cycles that appear and disappear after edits. Focused
 GoML tests cover heterogeneous composition, diamond reuse, dependency replacement,
 copy isolation, atomic batches, foreign handles, limits, cancellation, concurrent
 root deduplication and callback lifetime races.
+
+## Development and examples
+
+Requires GoML 0.1.55 or newer. The `examples/basic/` example shares the root manifest; test-only helpers are declared in `[dev-dependencies]`. From the library root, run:
+
+```sh
+goml run --example basic
+goml test
+goml verify --timeout 300s
+```
+
+`goml test` builds the example and runs its tests. `goml verify` repeats the example checks as an independent module against an isolated registry snapshot. `(cd ../verification && just ecosystem-test incremental)` also retains the library-specific smoke and compatibility checks.

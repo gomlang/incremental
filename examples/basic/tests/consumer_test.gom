@@ -1,6 +1,6 @@
 package tests;
 
-use consumer::incremental as application;
+use ecosystem::incremental::examples::basic as application;
 use ecosystem::incremental as inc;
 use std::testing;
 
