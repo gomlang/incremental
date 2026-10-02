@@ -1,0 +1,20 @@
+package tests;
+
+use ecosystem::incremental;
+use std::context;
+use std::testing;
+
+#[test]
+fn scoped_evaluation_crosses_package_boundary() -> () {
+    let db = incremental::Database::new();
+    let text = db.input("text", "value");
+    let number = db.input("number", 2);
+    let result = testing::expect_ok(
+        db.evaluate_with(
+            context::Context::background(),
+            |read| Result::Ok(read.input(text)? + read.input(number)?.to_string()),
+        ),
+        "evaluate",
+    );
+    testing::assert_eq(result, "value2");
+}

@@ -1,0 +1,112 @@
+package tests;
+
+use ecosystem::incremental as inc;
+use std::context;
+use std::task;
+use std::testing;
+
+#[test]
+fn scoped_reads_share_a_revision_with_queries_and_expire_after_return() -> () {
+    let db = inc::Database::new();
+    let input = db.input("value", 7);
+    let query = testing::expect_ok(
+        db.query("double", 4, |read: inc::Evaluation, _: isize| Result::Ok(read.input(input)? * 2)),
+        "query",
+    );
+    let saved: Ref[Option[inc::Evaluation]] = Ref::new(Option::None);
+    let value = testing::expect_ok(
+        db.evaluate(
+            |read| {
+                saved.set(Option::Some(read));
+                testing::assert_eq(
+                    testing::expect_err(db.try_set(input, 99), "write excluded").kind,
+                    inc::ErrorKind::Busy,
+                );
+                Result::Ok((read.input(input)?, read.query(query, 0)?))
+            },
+        ),
+        "grouped read",
+    );
+    testing::assert(value == (7, 14));
+    let read = testing::expect_some(saved.get(), "saved capability");
+    testing::assert_eq(
+        testing::expect_err(read.input(input), "expired read").kind,
+        inc::ErrorKind::ExpiredEvaluation,
+    );
+    testing::assert_ok(db.set(input, 8));
+    testing::assert_eq(
+        testing::expect_ok(db.evaluate(|read| read.query(query, 0)), "updated query"),
+        16,
+    );
+    testing::assert_eq(testing::expect_ok(db.stats(query), "stats").executions, 2);
+    let foreign = inc::Database::new().input("foreign", 0);
+    testing::assert_eq(
+        testing::expect_err(db.evaluate(|read| read.input(foreign)), "foreign input").kind,
+        inc::ErrorKind::ForeignDatabase,
+    );
+}
+
+#[test]
+fn scoped_read_failure_and_cancellation_release_gate_and_expire_capability() -> () {
+    let db = inc::Database::new();
+    let input = db.input("value", 0);
+    let saved: Ref[Option[inc::Evaluation]] = Ref::new(Option::None);
+    let failure: Result[(), inc::Error] = db.evaluate(
+        |read| {
+            saved.set(Option::Some(read));
+            Result::Err(inc::Error::user("failure"))
+        },
+    );
+    testing::assert_eq(testing::expect_err(failure, "callback error").kind, inc::ErrorKind::User);
+    testing::assert_eq(
+        testing::expect_err(testing::expect_some(saved.get(), "evaluation").check(), "expired").kind,
+        inc::ErrorKind::ExpiredEvaluation,
+    );
+    context::with_cancel(
+        context::Context::background(),
+        |ctx, cancel| {
+            let result = db.evaluate_with(
+                ctx,
+                |read| {
+                    let value = read.input(input)?;
+                    cancel.cancel();
+                    Result::Ok(value)
+                },
+            );
+            testing::assert_eq(
+                testing::expect_err(result, "cancelled publication").kind,
+                inc::ErrorKind::Cancelled,
+            );
+            testing::assert_err(db.evaluate_with(ctx, |_| Result::Ok(1)));
+        },
+    );
+    testing::assert_ok(db.try_set(input, 1));
+}
+
+#[test]
+fn concurrent_grouped_reads_never_observe_partial_batches() -> () {
+    let db = inc::Database::new();
+    let left = db.input("left", 0);
+    let right = db.input("right", 0);
+    task::scope(
+        |scope| {
+            let writer = scope.spawn(
+                |_| {
+                    for value in 1..100 {
+                        testing::assert_ok(
+                            db.apply(Vec::from_array([left.change(value), right.change(value)])),
+                        );
+                    }
+                },
+            );
+            for _ in 0..100 {
+                let pair = testing::expect_ok(
+                    db.evaluate(|read| Result::Ok((read.input(left)?, read.input(right)?))),
+                    "coherent reads",
+                );
+                testing::assert_eq(pair.0, pair.1);
+            }
+            writer.join();
+        },
+    );
+}
