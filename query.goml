@@ -122,10 +122,12 @@ impl[K: Hash + Eq, V] Query[K, V] {
         child.context_value.check().map_err(cancelled)?;
         let value = computed?;
         let stored = (self.policy.copy)(value);
+        child.context_value.check().map_err(cancelled)?;
         let unchanged = match state.value {
             Some(previous) => (self.policy.equal)(previous, stored),
             None => false,
         };
+        child.context_value.check().map_err(cancelled)?;
         if unchanged {
             let mut stats = self.stats_value.get();
             stats.unchanged += 1;

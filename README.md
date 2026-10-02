@@ -83,7 +83,9 @@ does not evaluate independent graph branches in parallel or offer persistent sna
 
 `fetch_with`, `set_with`, and `apply_with` accept `std::context::Context`. Waiting
 for the gate is cancellable, and evaluation checks cancellation between
-dependency operations and before publishing results. Long-running callbacks
+dependency operations and before publishing results, including after value-copy
+and equality policies return. Cancelling during those policies does not install
+a new memo value, verification revision, dependencies, or unchanged count. Long-running callbacks
 should call `read.check()` or use `read.context()` for cancellable I/O. Input
 batches complete atomically once admitted. Cancellation does not interrupt an
 arbitrary computation or blocking operation inside a user callback.
