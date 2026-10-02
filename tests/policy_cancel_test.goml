@@ -1,0 +1,90 @@
+package tests;
+
+use ecosystem::incremental as inc;
+use std::context;
+use std::testing;
+
+#[test]
+fn cancelled_copy_policy_does_not_publish_first_memo() -> () {
+    let database = inc::Database::new();
+    let armed = Ref::new(false);
+    let executions = Ref::new(0);
+    context::with_cancel(
+        context::Context::background(),
+        |ctx, cancel| {
+            let query = testing::expect_ok(
+                database.query_with(
+                    "copied",
+                    2,
+                    |key: isize| key.to_string(),
+                    inc::ValuePolicy::new(
+                        |left: isize, right| left == right,
+                        |value| {
+                            if armed.get() {
+                                cancel.cancel();
+                            }
+                            value
+                        },
+                    ),
+                    |_, key| {
+                        executions.set(executions.get() + 1);
+                        Result::Ok(key + 1)
+                    },
+                ),
+                "query",
+            );
+            armed.set(true);
+            testing::assert_eq(
+                testing::expect_err(database.fetch_with(query, 1, ctx), "cancel during copy").kind,
+                inc::ErrorKind::Cancelled,
+            );
+            armed.set(false);
+            testing::assert_eq(testing::expect_ok(database.fetch(query, 1), "retry"), 2);
+            testing::assert_eq(executions.get(), 2);
+        },
+    );
+}
+
+#[test]
+fn cancelled_equality_policy_retains_previous_revision_and_dependencies() -> () {
+    let database = inc::Database::new();
+    let input = database.input("input", 1);
+    let armed = Ref::new(false);
+    context::with_cancel(
+        context::Context::background(),
+        |ctx, cancel| {
+            let query = testing::expect_ok(
+                database.query_with(
+                    "equal",
+                    2,
+                    |key: isize| key.to_string(),
+                    inc::ValuePolicy::new(
+                        |left: isize, right| {
+                            if armed.get() {
+                                cancel.cancel();
+                            }
+                            left == right
+                        },
+                        |value| value,
+                    ),
+                    |read, _| Result::Ok(read.input(input)? % 2),
+                ),
+                "query",
+            );
+            testing::assert_eq(testing::expect_ok(database.fetch(query, 0), "initial"), 1);
+            let before = testing::expect_ok(database.inspect(query), "memo")[0];
+            testing::assert_ok(database.set(input, 3));
+            armed.set(true);
+            testing::assert_err(database.fetch_with(query, 0, ctx));
+            let retained = testing::expect_ok(database.inspect(query), "retained memo")[0];
+            testing::assert_eq(retained.verified_at, before.verified_at);
+            testing::assert_eq(retained.changed_at, before.changed_at);
+            testing::assert_eq(testing::expect_ok(database.stats(query), "stats").unchanged, 0);
+            armed.set(false);
+            testing::assert_eq(testing::expect_ok(database.fetch(query, 0), "retry"), 1);
+            let stats = testing::expect_ok(database.stats(query), "stats");
+            testing::assert_eq(stats.executions, 3);
+            testing::assert_eq(stats.unchanged, 1);
+        },
+    );
+}

@@ -1,0 +1,42 @@
+package tests;
+
+use ecosystem::incremental as inc;
+use std::context;
+use std::testing;
+
+#[test]
+fn cancelled_policy_results_are_not_cached_downstream() -> () {
+    let db = inc::Database::new();
+    let armed = Ref::new(true);
+    let calls = Ref::new(0);
+    context::with_cancel(
+        context::Context::background(),
+        |ctx, cancel| {
+            let query = testing::expect_ok(
+                db.query_with(
+                    "policy",
+                    1,
+                    |key: isize| key.to_string(),
+                    inc::ValuePolicy::new(
+                        |a: isize, b| a == b,
+                        |value| {
+                            if armed.get() {
+                                cancel.cancel();
+                            }
+                            value
+                        },
+                    ),
+                    |_, key| {
+                        calls.set(calls.get() + 1);
+                        Result::Ok(key)
+                    },
+                ),
+                "query",
+            );
+            testing::assert_err(db.fetch_with(query, 1, ctx));
+            armed.set(false);
+            testing::assert_eq(testing::expect_ok(db.fetch(query, 1), "retry"), 1);
+            testing::assert_eq(calls.get(), 2);
+        },
+    );
+}
