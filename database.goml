@@ -185,6 +185,14 @@ impl Database {
         key: K,
         ctx: context::Context,
     ) -> Result[V, Error] {
+        self.evaluate_with(ctx, |evaluation| evaluation.query(query, key))
+    }
+
+    pub fn evaluate_with[T](
+        self: Database,
+        ctx: context::Context,
+        read: (Evaluation) -> Result[T, Error],
+    ) -> Result[T, Error] {
         acquire(self.gate, ctx)?;
         defer self.gate.send(());
         let evaluation = Evaluation {
@@ -196,7 +204,14 @@ impl Database {
             ended: Channel::new(0),
         };
         defer evaluation.finish();
-        evaluation.query(query, key)
+        let result = read(evaluation);
+        evaluation.finish();
+        ctx.check().map_err(cancelled)?;
+        result
+    }
+
+    pub fn evaluate[T](self: Database, read: (Evaluation) -> Result[T, Error]) -> Result[T, Error] {
+        self.evaluate_with(context::Context::background(), read)
     }
 
     pub fn fetch[K: Hash + Eq, V](self: Database, query: Query[K, V], key: K) -> Result[V, Error] {

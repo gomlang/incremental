@@ -79,7 +79,7 @@ Database handles, input handles, and query handles can be shared across tasks.
 Root queries, input changes, batches, inspection, and cache clearing serialize
 through the database gate. Concurrent requests for the same key therefore share
 one successful execution. Distinct root queries also serialize; this release
-does not evaluate independent graph branches in parallel or offer snapshots.
+does not evaluate independent graph branches in parallel or offer persistent snapshots.
 
 `fetch_with`, `set_with`, and `apply_with` accept `std::context::Context`. Waiting
 for the gate is cancellable, and evaluation checks cancellation between
@@ -101,6 +101,16 @@ that root evaluation. `try_fetch` and `try_set` provide nonblocking alternatives
 that return `Busy`; they do not enable nested mutation. The library does not
 inspect goroutine identities. Panics are outside the fallible API contract;
 return `Error::user` for application failures.
+
+`Database::evaluate(read)` and `evaluate_with(ctx, read)` run a scoped group of
+input and query reads under one database gate. Use the callback's `Evaluation`
+to read several types without creating an artificial memoized query. Concurrent
+writes wait until the whole callback finishes, so all reads see one revision.
+The returned value is not cached; ordinary nested queries retain their caches.
+The capability expires before returning, even on callback failure, and a
+cancelled context prevents returning a successful result. Admission is
+cancellable. Callbacks follow the same no-reentrant-database-access and
+cooperative-cancellation rules as query callbacks.
 
 ## Value and key contracts
 
