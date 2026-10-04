@@ -180,6 +180,7 @@ pub struct Evaluation {
     context_value: context::Context,
     path: Vec[Active],
     reads: Vec[Dependency],
+    read_ids: HashMap[Ref[()], bool],
     access: Channel[()],
     ended: Channel[()],
 }

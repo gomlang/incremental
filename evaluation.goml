@@ -46,11 +46,10 @@ impl Evaluation {
     }
 
     fn record(self: Evaluation, dependency: Dependency) -> () {
-        for previous in self.reads {
-            if ptr_eq(previous.identity, dependency.identity) {
-                return
-            }
+        if self.read_ids.contains(dependency.identity) {
+            return
         }
+        self.read_ids.set(dependency.identity, true);
         self.reads.push(dependency);
     }
 
@@ -137,6 +136,7 @@ impl Evaluation {
                 context_value: self.context_value,
                 path,
                 reads: Vec::new(),
+                read_ids: HashMap::new(),
                 access: gate(),
                 ended: Channel::new(0),
             },

@@ -212,6 +212,7 @@ impl Database {
             context_value: ctx,
             path: Vec::new(),
             reads: Vec::new(),
+            read_ids: HashMap::new(),
             access: gate(),
             ended: Channel::new(0),
         };
@@ -246,6 +247,7 @@ impl Database {
             context_value: context::Context::background(),
             path: Vec::new(),
             reads: Vec::new(),
+            read_ids: HashMap::new(),
             access: gate(),
             ended: Channel::new(0),
         };

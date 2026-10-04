@@ -77,6 +77,11 @@ and reuses the cached label without invoking its callback again.
   cache hits, validations, unchanged results, evictions and failures. These are
   cumulative counters; clearing entries does not reset them.
 
+Dependency recording uses a per-evaluation identity index: duplicate checks
+take expected O(1) work, with O(d) additional temporary storage for d distinct
+dependencies. Inspection preserves first-read order. Equal labels do not merge
+distinct inputs or query memos, including a new memo for an evicted key.
+
 ## Concurrency and cancellation
 
 Database handles, input handles, and query handles can be shared across tasks.
