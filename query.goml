@@ -52,6 +52,13 @@ impl[K: Hash + Eq, V] Query[K, V] {
             },
         };
         let child = parent.child(memo.identity, memo.label)?;
+        defer {
+            child.finish();
+            let mut state = memo.state.get();
+            state.active = false;
+            memo.state.set(state);
+            self.trim(self.capacity);
+        };
         let mut state = memo.state.get();
         if self.clock.get() == 9223372036854775807 {
             self.clock.set(0);
@@ -66,16 +73,11 @@ impl[K: Hash + Eq, V] Query[K, V] {
         state.active = true;
         memo.state.set(state);
         let result = self.refresh(parent, child, key, memo);
-        child.finish();
-        let mut state = memo.state.get();
-        state.active = false;
-        memo.state.set(state);
         if result.is_err() {
             let mut stats = self.stats_value.get();
             stats.failures += 1;
             self.stats_value.set(stats);
         }
-        self.trim(self.capacity);
         result
     }
 

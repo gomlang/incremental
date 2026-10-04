@@ -1,0 +1,102 @@
+package tests;
+
+use ecosystem::incremental as inc;
+use std::panic;
+use std::testing;
+
+#[test]
+fn query_panic_expires_saved_evaluation_and_releases_database() -> () {
+    let database = inc::Database::new();
+    let input = database.input("input", 1);
+    let saved: Ref[Option[inc::Evaluation]] = Ref::new(Option::None);
+    let original = testing::expect_err(panic::catch(|| panic::raise("query panic")), "original");
+    let query: inc::Query[isize, isize] = testing::expect_ok(
+        database.query(
+            "panic",
+            1,
+            |read: inc::Evaluation, _: isize| {
+                saved.set(Option::Some(read));
+                panic::resume(original)
+            },
+        ),
+        "query",
+    );
+    let caught = testing::expect_err(panic::catch(|| database.fetch(query, 0)), "panic");
+    testing::assert_eq(caught.message(), original.message());
+    testing::assert_eq(caught.stack_trace(), original.stack_trace());
+    let read = testing::expect_some(saved.get(), "saved evaluation");
+    testing::assert_eq(
+        testing::expect_err(read.input(input), "expired after panic").kind,
+        inc::ErrorKind::ExpiredEvaluation,
+    );
+    testing::assert_ok(database.try_set(input, 2));
+}
+
+#[test]
+fn recursive_query_panic_unpins_memos_and_restores_capacity() -> () {
+    let database = inc::Database::new();
+    let installed: Ref[Option[inc::Query[isize, isize]]] = Ref::new(Option::None);
+    let query: inc::Query[isize, isize] = testing::expect_ok(
+        database.query(
+            "recursive",
+            1,
+            |read: inc::Evaluation, key: isize| {
+                if key == 0 {
+                    panic::raise("leaf panic")
+                }
+                read.query(testing::expect_some(installed.get(), "installed query"), key - 1)
+            },
+        ),
+        "query",
+    );
+    installed.set(Option::Some(query));
+    let caught = testing::expect_err(panic::catch(|| database.fetch(query, 3)), "panic");
+    testing::assert_eq(caught.message(), "leaf panic");
+    testing::assert_eq(testing::expect_ok(database.inspect(query), "memo count").len(), 1);
+    testing::assert_eq(testing::expect_ok(database.stats(query), "stats").evictions, 3);
+}
+
+#[test]
+fn query_policy_panic_does_not_pin_old_memo_or_publish_partial_value() -> () {
+    for stage in Vec::from_array(["copy", "equal"]) {
+        let database = inc::Database::new();
+        let input = database.input("input", 1);
+        let armed = Ref::new(false);
+        let query: inc::Query[isize, isize] = testing::expect_ok(
+            database.query_with(
+                "policy",
+                1,
+                |key: isize| key.to_string(),
+                inc::ValuePolicy::new(
+                    |left: isize, right| {
+                        if armed.get() && stage == "equal" {
+                            panic::raise("equal panic")
+                        }
+                        left == right
+                    },
+                    |value| {
+                        if armed.get() && stage == "copy" {
+                            panic::raise("copy panic")
+                        }
+                        value
+                    },
+                ),
+                |read, key| Result::Ok(read.input(input)? + key),
+            ),
+            "query",
+        );
+        testing::assert_eq(testing::expect_ok(database.fetch(query, 0), "initial"), 1);
+        let before = testing::expect_ok(database.inspect(query), "before")[0];
+        testing::assert_ok(database.set(input, 2));
+        armed.set(true);
+        let caught = testing::expect_err(panic::catch(|| database.fetch(query, 0)), "panic");
+        testing::assert_eq(caught.message(), stage + " panic");
+        let after = testing::expect_ok(database.inspect(query), "after")[0];
+        testing::assert_eq(after.verified_at, before.verified_at);
+        testing::assert_eq(after.changed_at, before.changed_at);
+        armed.set(false);
+        testing::assert_eq(testing::expect_ok(database.fetch(query, 1), "new key"), 3);
+        testing::assert_eq(testing::expect_ok(database.fetch(query, 1), "cached new key"), 3);
+        testing::assert_eq(testing::expect_ok(database.stats(query), "stats").executions, 3);
+    }
+}

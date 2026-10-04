@@ -101,8 +101,11 @@ database methods such as `fetch`, `set`, `revision`, `inspect`, or `clear` from
 inside a callback on the same database would wait for the gate already held by
 that root evaluation. `try_fetch` and `try_set` provide nonblocking alternatives
 that return `Busy`; they do not enable nested mutation. The library does not
-inspect goroutine identities. Panics are outside the fallible API contract;
-return `Error::user` for application failures.
+inspect goroutine identities. Query callback and value-policy panics propagate
+unchanged; unwinding expires their evaluation capabilities, unpins active memo
+entries, restores the cache capacity and releases the database gate. A panic
+before publication leaves the previous memo value and revision intact. Panics
+are not converted into query errors; return `Error::user` for application failures.
 
 `Database::evaluate(read)` and `evaluate_with(ctx, read)` run a scoped group of
 input and query reads under one database gate. Use the callback's `Evaluation`
