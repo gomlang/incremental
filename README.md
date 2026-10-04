@@ -42,7 +42,11 @@ and reuses the cached label without invoking its callback again.
   atomically under one revision. Foreign handles are checked before any update.
   All equal assignments form a no-op batch. Repeated writes to the same input
   execute in order; a batch that changes a value and restores it still advances
-  the revision. Prepared changes can be reused.
+  the revision. Prepared changes can be reused. If a copy/equality policy panics,
+  the batch restores all earlier input values and their change revisions before
+  releasing the database gate, then propagates the original panic. Rollback
+  does not invoke policies; cached query results remain consistent. The batch
+  retains an undo entry for each changed assignment until it finishes.
 - `query(name, capacity, callback)` creates a typed `Query[K, V]`. Keys implement
   `Hash + Eq + ToString`; values implement `PartialEq`. `query_with` accepts a
   custom key label and `ValuePolicy[V]`, requiring only `Hash + Eq` for keys.

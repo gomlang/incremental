@@ -118,7 +118,7 @@ pub struct Input[T] {
 
 pub struct Change {
     owner: Ref[()],
-    apply: (isize) -> bool,
+    apply: (isize, Vec[() -> ()]) -> bool,
 }
 
 impl[T] Input[T] {
@@ -126,14 +126,14 @@ impl[T] Input[T] {
         let replacement = (self.policy.copy)(value);
         Change {
             owner: self.owner,
-            apply: |revision| {
+            apply: |revision, undo| {
                 let previous = self.state.get();
                 if (self.policy.equal)(previous.value, replacement) {
                     false
                 } else {
-                    self.state.set(
-                        InputState { value: (self.policy.copy)(replacement), changed_at: revision },
-                    );
+                    let value = (self.policy.copy)(replacement);
+                    undo.push(|| self.state.set(previous));
+                    self.state.set(InputState { value, changed_at: revision });
                     true
                 }
             },

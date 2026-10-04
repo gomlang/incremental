@@ -24,6 +24,12 @@ fn acquire(value: Channel[()], ctx: context::Context) -> Result[(), Error] {
     }
 }
 
+fn rollback_changes(undo: Vec[() -> ()]) -> () {
+    while let Some(restore) = undo.pop() {
+        restore();
+    }
+}
+
 impl Database {
     pub fn new() -> Database {
         Database {
@@ -129,14 +135,20 @@ impl Database {
             return Result::Err(failure(ErrorKind::Limit, "revision counter exhausted"))
         }
         let revision = self.revision_value.get() + 1;
+        let undo: Vec[() -> ()] = Vec::new();
+        let committed = Ref::new(false);
+        defer if !committed.get() {
+            rollback_changes(undo);
+        };
         let mut changed = false;
         for change in changes {
-            let applied = (change.apply)(revision);
+            let applied = (change.apply)(revision, undo);
             changed = changed || applied;
         }
         if changed {
             self.revision_value.set(revision);
         }
+        committed.set(true);
         Result::Ok(changed)
     }
 

@@ -2,6 +2,7 @@ package tests;
 
 use ecosystem::incremental as inc;
 use std::panic;
+use std::task;
 use std::testing;
 
 #[test]
@@ -99,4 +100,118 @@ fn query_policy_panic_does_not_pin_old_memo_or_publish_partial_value() -> () {
         testing::assert_eq(testing::expect_ok(database.fetch(query, 1), "cached new key"), 3);
         testing::assert_eq(testing::expect_ok(database.stats(query), "stats").executions, 3);
     }
+}
+
+#[test]
+fn batch_policy_panic_rolls_back_inputs_and_keeps_cached_queries_consistent() -> () {
+    for stage in Vec::from_array(["copy", "equal"]) {
+        let database = inc::Database::new();
+        let left = database.input("left", 1);
+        let unrelated = database.input("unrelated", false);
+        let armed = Ref::new(false);
+        let original = testing::expect_err(panic::catch(|| panic::raise("batch " + stage)), "panic");
+        let right = database.input_with(
+            "right",
+            "old",
+            inc::ValuePolicy::new(
+                |left: string, right| {
+                    if armed.get() && stage == "equal" {
+                        panic::resume(original)
+                    }
+                    left == right
+                },
+                |value| {
+                    if armed.get() && stage == "copy" {
+                        panic::resume(original)
+                    }
+                    value
+                },
+            ),
+        );
+        let left_query = testing::expect_ok(
+            database.query("left", 1, |read: inc::Evaluation, _: isize| read.input(left)),
+            "left query",
+        );
+        let combined = testing::expect_ok(
+            database.query(
+                "combined",
+                1,
+                |read: inc::Evaluation, _: isize| Result::Ok(
+                    read.query(left_query, 0)?.to_string() + ":" + read.input(right)?,
+                ),
+            ),
+            "combined query",
+        );
+        testing::assert_eq(testing::expect_ok(database.fetch(combined, 0), "initial"), "1:old");
+        let revision = database.revision();
+        let changes = Vec::from_array([left.change(2), left.change(3), right.change("new")]);
+        armed.set(true);
+        let caught = testing::expect_err(panic::catch(|| database.apply(changes)), "batch panic");
+        testing::assert_eq(caught.message(), original.message());
+        testing::assert_eq(caught.stack_trace(), original.stack_trace());
+        armed.set(false);
+        testing::assert_eq(database.revision(), revision);
+        testing::assert_eq(
+            testing::expect_ok(database.evaluate(|read| read.input(left)), "rolled back left"),
+            1,
+        );
+        testing::assert_eq(
+            testing::expect_ok(database.evaluate(|read| read.input(right)), "unchanged right"),
+            "old",
+        );
+        testing::assert_eq(testing::expect_ok(database.fetch(combined, 0), "cached"), "1:old");
+        testing::assert_ok(database.try_set(unrelated, true));
+        testing::assert_eq(testing::expect_ok(database.fetch(combined, 0), "validated"), "1:old");
+        testing::assert_eq(
+            testing::expect_ok(database.stats(left_query), "left stats").executions,
+            1,
+        );
+        testing::assert_eq(
+            testing::expect_ok(database.stats(combined), "combined stats").executions,
+            1,
+        );
+        testing::assert(testing::expect_ok(database.apply(changes), "retry prepared changes"));
+        testing::assert_eq(database.revision(), revision + 2);
+        testing::assert_eq(testing::expect_ok(database.fetch(combined, 0), "updated"), "3:new");
+    }
+}
+
+#[test]
+fn concurrent_readers_never_observe_a_panicking_batch_partial_updates() -> () {
+    let database = inc::Database::new();
+    let left = database.input("left", 0);
+    let right = database.input_with(
+        "right",
+        "stable",
+        inc::ValuePolicy::new(|_: string, _: string| panic::raise("rejected update"), |value| value),
+    );
+    let changes = Vec::from_array([left.change(1), right.change("unreachable")]);
+    task::scope(
+        |scope| {
+            let writer = scope.spawn(
+                |_| {
+                    for _ in 0..50 {
+                        let caught = testing::expect_err(
+                            panic::catch(|| database.apply(changes)),
+                            "batch panic",
+                        );
+                        testing::assert_eq(caught.message(), "rejected update");
+                    }
+                },
+            );
+            for _ in 0..100 {
+                let pair = testing::expect_ok(
+                    database.evaluate(|read| Result::Ok((read.input(left)?, read.input(right)?))),
+                    "coherent snapshot",
+                );
+                testing::assert(pair == (0, "stable"));
+            }
+            writer.join();
+        },
+    );
+    testing::assert_eq(database.revision(), 1);
+    testing::assert_eq(
+        testing::expect_ok(database.evaluate(|read| read.input(left)), "after writer"),
+        0,
+    );
 }
